@@ -14,6 +14,8 @@ MODES = ("manual", "relay", "p", "pid", "student")
 FIXED_DT = 0.05
 CONTROL_DT = 0.25
 SAMPLE_DT = 0.5
+REACTION_LOW = 90.0
+REACTION_HIGH = 110.0
 
 
 @dataclass
@@ -51,7 +53,7 @@ class Sample:
 
 def temperature_factor(temperature: float) -> float:
     """Максимум при 100 °C; синтез разрешён от 90 до 110 °C включительно."""
-    if not 90.0 <= temperature <= 110.0:
+    if not REACTION_LOW <= temperature <= REACTION_HIGH:
         return 0.0
     return math.exp(-0.5 * ((temperature - 100.0) / 5.0) ** 2)
 
@@ -142,7 +144,12 @@ class Simulation:
             if self.mode == "manual":
                 output = self.manual_duty
             elif self.mode == "relay":
-                output = 1.0 if error > 0.0 else 0.0
+                if self.sensor_temperature <= REACTION_LOW:
+                    output = 1.0
+                elif self.sensor_temperature >= REACTION_HIGH:
+                    output = 0.0
+                else:
+                    output = self.duty
             elif self.mode == "p":
                 output = p.kp * error
             elif self.mode == "pid":
@@ -190,7 +197,7 @@ class Simulation:
         self.sensor_temperature += sensor_alpha * (self.temperature - self.sensor_temperature)
         self.polymer_mass = min(p.initial_mass, self.polymer_mass + self.rate * FIXED_DT)
         self.peak_temperature = max(self.peak_temperature, self.temperature)
-        if 90.0 <= self.temperature <= 110.0:
+        if REACTION_LOW <= self.temperature <= REACTION_HIGH:
             self.time_in_band += FIXED_DT
         self._steps += 1
         self.time = self._steps * FIXED_DT

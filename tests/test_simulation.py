@@ -113,6 +113,18 @@ class ThermalTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_relay_holds_previous_output_between_reaction_thresholds(self):
+        sim = Simulation()
+        # Начинаем внутри диапазона с выключенным нагревом. Проверяем оба
+        # точных порога и пересечения 100 °C в обоих направлениях.
+        sequence = [(100, 0), (90.1, 0), (90, 1), (100, 1), (109.9, 1),
+                    (110, 0), (109.9, 0), (100, 0), (90.1, 0), (89, 1), (111, 0)]
+        for temperature, expected in sequence:
+            with self.subTest(sensor_temperature=temperature):
+                sim.sensor_temperature = temperature
+                sim.control()
+                self.assertEqual(sim.duty, expected)
+
     def test_callback_interval_and_state(self):
         observations = []
 

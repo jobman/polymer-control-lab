@@ -9,7 +9,7 @@ from typing import Callable
 
 import pygame
 
-from simulation import MODES, Simulation
+from simulation import MODES, REACTION_HIGH, REACTION_LOW, Simulation
 
 
 ROOT = Path(__file__).resolve().parent
@@ -398,7 +398,7 @@ class LabApp:
         self.text("02  /  РЕГУЛЯТОР", (44, 576), 14, MUTED, bold=True)
         descriptions = {
             "manual": "Мощность задаётся нижним ползунком.",
-            "relay": "100% ниже 100 °C; иначе 0%.",
+            "relay": f"По датчику: вкл. ≤ {REACTION_LOW:g} °C, выкл. ≥ {REACTION_HIGH:g} °C.",
             "p": "u = Kp × ошибка температуры.",
             "pid": "ПИД с защитой от накопления интеграла.",
             "student": "Ваш код: controller.py → regulator().",
@@ -438,8 +438,8 @@ class LabApp:
         if is_temperature:
             series = [("sensor_temperature", MUTED, 1, "Датчик"), ("temperature", TEAL, 2, "Бочка")]
             if self.barrel_zoom:
-                minimum = min(90.0, min(min(s.temperature, s.sensor_temperature) for s in history))
-                maximum = max(110.0, max(max(s.temperature, s.sensor_temperature) for s in history))
+                minimum = min(REACTION_LOW, min(min(s.temperature, s.sensor_temperature) for s in history))
+                maximum = max(REACTION_HIGH, max(max(s.temperature, s.sensor_temperature) for s in history))
                 v_min = math.floor((minimum - 5) / 5) * 5
                 v_max = math.ceil((maximum + 5) / 5) * 5
             else:
@@ -462,8 +462,8 @@ class LabApp:
                     plot.bottom - 1 - (value - v_min) / (v_max - v_min) * (plot.h - 1))
 
         if is_temperature:
-            zone_top = point(0, 110)[1]
-            zone_bottom = point(0, 90)[1]
+            zone_top = point(0, REACTION_HIGH)[1]
+            zone_bottom = point(0, REACTION_LOW)[1]
             pygame.draw.rect(self.canvas, (24, 53, 55), (plot.x, zone_top, plot.w, zone_bottom - zone_top))
         for index in range(5):
             value = v_min + (v_max - v_min) * index / 4
@@ -479,7 +479,7 @@ class LabApp:
         previous_clip = self.canvas.get_clip()
         self.canvas.set_clip(plot)
         if is_temperature:
-            self.text("90–110 °C", (plot.right - 100, point(0, 110)[1] + 3), 12, TEAL)
+            self.text(f"{REACTION_LOW:g}–{REACTION_HIGH:g} °C", (plot.right - 100, zone_top + 3), 12, TEAL)
             for attribute, color, line_width, _ in series:
                 points = [point(s.time, getattr(s, attribute)) for s in history]
                 if len(points) >= 2:
@@ -527,7 +527,7 @@ class LabApp:
         pygame.draw.rect(self.canvas, RAISED, (1120, 172, 80, 40), border_radius=8)
         self.text("Esc", (1160, 192), 17, center=True)
         lines = [
-            ("Начните с реле", "Режим 2 → дождитесь 100 °C. Мощность уже нулевая, а температура ещё растёт."),
+            ("Начните с реле", f"Режим 2. По датчику: вкл. при ≤ {REACTION_LOW:g} °C, выкл. при ≥ {REACTION_HIGH:g} °C. Между порогами мощность прежняя."),
             ("Исследуйте инерцию", "Увеличьте теплоёмкость нагревателя, нажмите R и сравните пик температуры."),
             ("Проверьте устойчивость", "Режим 4: 18 кВт, Kp = 0.05, Kd = 1.2. Сравните Ki = 0.0001 и Ki = 0.01, каждый раз с R."),
             ("Проверьте возмущение", "Около 100 °C нажмите C: обдув увеличивает потери тепла бочки в три раза."),
