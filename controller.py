@@ -14,19 +14,32 @@ def regulator(temperature: float, dt: float, target: float, state: dict) -> floa
     target: заданная температура, 100 °C.
     state: память между вызовами. Очищается при R, F5 и смене режима.
 
-    Примеры памяти:
-        state['integral'] = state.get('integral', 0.0) + (target-temperature)*dt
-        previous = state.get('previous', temperature)
-        derivative = (temperature-previous) / dt
-        state['previous'] = temperature
-
     Не используйте time.time(), sleep() и цикл while: один вызов — один расчёт.
     Выход за диапазон ограничивается. Исключение/NaN отключает мощность до
     исправления кода и F5 или переключения режима. Бочка продолжает остывать.
 
-    Начальный пример — реле. Посмотрите, насколько температура превысит 100 °C,
-    когда мощность уже равна нулю. Затем попробуйте П- или ПИД-регулятор.
+    Начальный пример — ПИД. Попробуйте выставить ki = kd = 0 для П-регулятора
+    или увеличить ki до 0.01 и посмотреть, как изменятся колебания.
     """
-    if temperature < target:
-        return 1.0
-    return 0.0
+    kp, ki, kd = 0.05, 0.0001, 1.2
+    error = target - temperature
+
+    # П реагирует на текущую ошибку. Д тормозит нагрев при росте температуры.
+    proportional = kp * error
+    previous = state.get("previous_temperature", temperature)
+    derivative = -kd * (temperature - previous) / dt
+    state["previous_temperature"] = temperature
+
+    # И накапливает ошибку. При насыщении принимаем новый интеграл только
+    # если ошибка помогает вернуть команду в рабочий диапазон.
+    integral = state.get("integral", 0.0)
+    candidate = integral + error * dt
+    trial = proportional + ki * candidate + derivative
+    pushes_above = trial > 1.0 and error > 0.0
+    pushes_below = trial < 0.0 and error < 0.0
+    if not (pushes_above or pushes_below):
+        integral = candidate
+    state["integral"] = integral
+
+    power = proportional + ki * integral + derivative
+    return max(0.0, min(1.0, power))
