@@ -109,6 +109,7 @@ class LabApp:
         self.clock = pygame.time.Clock()
         self.fonts = {}
         self.sim = Simulation()
+        self.next_load_kg = self.sim.parameters.initial_mass
         self.paused = False
         self.running = True
         self.speed_index = 2
@@ -165,8 +166,9 @@ class LabApp:
         self.paused = not self.paused
 
     def reset(self):
+        self.sim.parameters.initial_mass = self.next_load_kg
         self.sim.reset()
-        self.notify("Новая загрузка. Температуры и статистика сброшены; настройки сохранены.")
+        self.notify(f"Новая загрузка {self.next_load_kg:g} кг. Температуры и статистика сброшены.")
 
     def change_speed(self, delta):
         self.speed_index = max(0, min(len(SPEEDS) - 1, self.speed_index + delta))
@@ -216,6 +218,9 @@ class LabApp:
         self.window_button = button((1160, 90, 256, 42), "Графики: 10 мин", self.change_window)
         button((1096, 263, 180, 34), "Бочка крупно", self.toggle_barrel_zoom,
                active=lambda: self.barrel_zoom)
+        self.widgets.append(Slider((240, 484, 136, 44), "После R", lambda: self.next_load_kg,
+                                   lambda value: setattr(self, "next_load_kg", value),
+                                   10, 10000, 10, lambda x: f"{x:g} кг", scale_knee=1000))
         for index, (mode, label) in enumerate(zip(MODES, MODE_LABELS)):
             button((44 + index * 69, 609, 63, 36), label,
                    lambda mode=mode: self.sim.set_mode(mode), active=lambda mode=mode: self.sim.mode == mode)
@@ -382,16 +387,16 @@ class LabApp:
         coil = [(63 + i * 15, 498 + (-6 if i % 2 else 6)) for i in range(11)]
         pygame.draw.lines(self.canvas, coil_color, False, coil, 5)
         self.text("Нагреватель", (139, 515), 13, ORANGE, center=True)
-        self.text("ЗАГРУЗКА", (240, 311), 12, MUTED)
-        self.text("100 кг", (240, 332), 25, bold=True)
-        self.text("ПОЛИЭТИЛЕН", (240, 378), 12, MUTED)
-        self.text(f"{sim.polymer_mass:.2f} кг", (240, 400), 24, BLUE, bold=True)
-        self.text(f"{fraction:.1%} загрузки", (240, 432), 14, MUTED)
-        pygame.draw.rect(self.canvas, BORDER, (240, 465, 136, 6), border_radius=3)
+        self.text("ЗАГРУЗКА ОПЫТА", (240, 305), 12, MUTED)
+        self.text(f"{sim.parameters.initial_mass:g} кг", (240, 323), 25, bold=True)
+        self.text("ПОЛИЭТИЛЕН", (240, 365), 12, MUTED)
+        self.text(f"{sim.polymer_mass:.2f} кг", (240, 382), 22, BLUE, bold=True)
+        self.text(f"{fraction:.1%} загрузки", (240, 413), 14, MUTED)
+        pygame.draw.rect(self.canvas, BORDER, (240, 438, 136, 6), border_radius=3)
         if fraction > 0:
-            pygame.draw.rect(self.canvas, BLUE, (240, 465, max(2, int(136 * fraction)), 6), border_radius=3)
+            pygame.draw.rect(self.canvas, BLUE, (240, 438, max(2, int(136 * fraction)), 6), border_radius=3)
         status = "Сырьё израсходовано" if sim.remaining_mass <= 1e-10 else "Синтез идёт" if sim.rate > 0 else "Вне зоны синтеза"
-        self.text(status, (240, 487), 13, BLUE if sim.rate > 0 else MUTED)
+        self.text(status, (240, 450), 13, BLUE if sim.rate > 0 else MUTED)
 
     def draw_controls(self):
         self.panel((24, 560, 376, 224))

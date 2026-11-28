@@ -29,7 +29,7 @@ class Parameters:
     reactor_loss: float = 32.0             # Вт/°C, бочка -> среда
     heater_loss: float = 8.0               # Вт/°C, нагреватель -> среда
     sensor_tau: float = 2.0                # с, инерция датчика
-    initial_mass: float = 100.0            # кг этилена, условная загрузка
+    initial_mass: float = 1000.0           # кг этилена, условная загрузка
     max_rate: float = 0.08                 # кг/с при 100 °C
     kp: float = 0.05                       # доля мощности / °C
     ki: float = 0.0001                     # доля мощности / (°C * с)
