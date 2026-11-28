@@ -48,11 +48,13 @@ class Button:
 
 
 class Slider:
-    def __init__(self, rect, label, getter, setter, low, high, step, formatter, *, enabled=None):
+    def __init__(self, rect, label, getter, setter, low, high, step, formatter, *, enabled=None, scale_knee=None):
         self.rect = pygame.Rect(rect)
         self.label, self.getter, self.setter = label, getter, setter
         self.low, self.high, self.step, self.formatter = low, high, step, formatter
         self.enabled = enabled or (lambda: True)
+        self.scale_knee = scale_knee
+        self.log_span = math.log1p((high - low) / scale_knee) if scale_knee is not None else None
 
     @property
     def track(self):
@@ -65,8 +67,12 @@ class Slider:
 
     def set_from_mouse(self, x):
         if self.enabled():
-            fraction = max(0.0, min(1.0, (x - self.rect.x) / self.rect.w))
-            value = self.low + fraction * (self.high - self.low)
+            fraction = max(0.0, min(1.0, (x - self.rect.x) / (self.rect.w - 1)))
+            if self.scale_knee is None:
+                offset = fraction * (self.high - self.low)
+            else:
+                offset = self.scale_knee * math.expm1(fraction * self.log_span)
+            value = self.low + offset
             value = self.low + round((value - self.low) / self.step) * self.step
             self.setter(round(max(self.low, min(self.high, value)), 7))
 
@@ -76,8 +82,12 @@ class Slider:
         app.text(self.label, (self.rect.x, self.rect.y), 16, TEXT if enabled else MUTED)
         app.text(self.formatter(self.getter()), (self.rect.right, self.rect.y), 16, color, right=True)
         pygame.draw.rect(app.canvas, BORDER, self.track, border_radius=3)
-        fraction = (self.getter() - self.low) / (self.high - self.low)
-        x = self.rect.x + int(fraction * self.rect.w)
+        offset = self.getter() - self.low
+        if self.scale_knee is None:
+            fraction = offset / (self.high - self.low)
+        else:
+            fraction = math.log1p(offset / self.scale_knee) / self.log_span
+        x = self.rect.x + round(fraction * (self.rect.w - 1))
         if x > self.rect.x:
             pygame.draw.rect(app.canvas, color, (self.rect.x, self.track.y, x - self.rect.x, 6), border_radius=3)
         pygame.draw.circle(app.canvas, color, (x, self.track.centery), 7)
@@ -103,6 +113,7 @@ class LabApp:
         self.running = True
         self.speed_index = 2
         self.window_seconds = 600
+        self.barrel_zoom = False
         self.help_visible = False
         self.toast = ""
         self.toast_until = 0
@@ -170,6 +181,9 @@ class LabApp:
         values = (120, 300, 600, 1200)
         self.window_seconds = values[(values.index(self.window_seconds) + 1) % len(values)]
 
+    def toggle_barrel_zoom(self):
+        self.barrel_zoom = not self.barrel_zoom
+
     def reload_student(self, initial=False):
         try:
             self.sim.reload_controller(ROOT / "controller.py")
@@ -200,6 +214,8 @@ class LabApp:
         button((956, 90, 44, 42), "−", lambda: self.change_speed(-1))
         button((1100, 90, 44, 42), "+", lambda: self.change_speed(1))
         self.window_button = button((1160, 90, 256, 42), "Графики: 10 мин", self.change_window)
+        button((1096, 263, 180, 34), "Бочка крупно", self.toggle_barrel_zoom,
+               active=lambda: self.barrel_zoom)
         for index, (mode, label) in enumerate(zip(MODES, MODE_LABELS)):
             button((44 + index * 69, 609, 63, 36), label,
                    lambda mode=mode: self.sim.set_mode(mode), active=lambda mode=mode: self.sim.mode == mode)
@@ -211,7 +227,8 @@ class LabApp:
             self.widgets.append(slider)
             return slider
 
-        setting((44, 675, 336, 44), "Источник мощности", "supply_kw", 4, 30, 0.5, lambda x: f"{x:.1f} кВт")
+        setting((44, 675, 336, 44), "Источник (4–500 кВт)", "supply_kw", 4, 500, 0.5,
+                lambda x: f"{x:.1f} кВт", scale_knee=8)
         self.widgets.append(Slider((44, 735, 336, 44), "Команда вручную", lambda: self.sim.manual_duty,
                                    lambda value: setattr(self.sim, "manual_duty", value),
                                    0, 1, 0.01, lambda x: f"{x:.0%}", enabled=lambda: self.sim.mode == "manual"))
@@ -219,9 +236,12 @@ class LabApp:
                 lambda x: f"{x / 1000:.1f} кДж/°C")
         button((372, 846, 214, 42), "Обдув  C: выключен", self.toggle_cooling, active=lambda: self.sim.cooling)
         self.cooling_button = self.widgets[-1]
-        setting((626, 845, 228, 44), "Kp", "kp", 0, 0.12, 0.001, lambda x: f"{x:.3f}")
-        setting((886, 845, 228, 44), "Ki", "ki", 0, 0.002, 0.00001, lambda x: f"{x:.5f}")
-        setting((1146, 845, 248, 44), "Kd", "kd", 0, 8, 0.1, lambda x: f"{x:.1f}")
+        setting((626, 845, 228, 44), "Kp (П и ПИД)", "kp", 0, 10, 0.001,
+                lambda x: f"{x:.3f}", scale_knee=0.02)
+        setting((886, 845, 228, 44), "Ki (ПИД)", "ki", 0, 0.2, 0.00001,
+                lambda x: f"{x:.5f}", scale_knee=0.0001)
+        setting((1146, 845, 248, 44), "Kd (ПИД)", "kd", 0, 100, 0.1,
+                lambda x: f"{x:.1f}", scale_knee=0.5)
 
     def logical_position(self, position):
         width, height = self.screen.get_size()
@@ -264,6 +284,8 @@ class LabApp:
                 self.export()
             elif event.key == pygame.K_c:
                 self.toggle_cooling()
+            elif event.key == pygame.K_z:
+                self.toggle_barrel_zoom()
             elif event.key == pygame.K_F5:
                 self.reload_student()
             elif event.key == pygame.K_F1:
@@ -412,10 +434,20 @@ class LabApp:
         plot = pygame.Rect(x + 64, y + 68, width - 90, height - 106)
         t_max = max(float(self.window_seconds), self.sim.time)
         t_min = t_max - self.window_seconds
+        v_min = 0.0
         if is_temperature:
-            maximum = max(120.0, max(max(s.temperature, s.heater_temperature) for s in history) * 1.10)
-            v_max = math.ceil(maximum / 20) * 20
-            legend = ((TEAL, "Бочка"), (ORANGE, "Нагреватель"), (MUTED, "Датчик"), (BLUE, "Цель 100 °C"))
+            series = [("sensor_temperature", MUTED, 1, "Датчик"), ("temperature", TEAL, 2, "Бочка")]
+            if self.barrel_zoom:
+                minimum = min(90.0, min(min(s.temperature, s.sensor_temperature) for s in history))
+                maximum = max(110.0, max(max(s.temperature, s.sensor_temperature) for s in history))
+                v_min = math.floor((minimum - 5) / 5) * 5
+                v_max = math.ceil((maximum + 5) / 5) * 5
+            else:
+                series.insert(0, ("heater_temperature", ORANGE, 2, "Нагреватель"))
+                maximum = max(120.0, max(max(s.temperature, s.heater_temperature) for s in history) * 1.10)
+                v_max = math.ceil(maximum / 20) * 20
+            legend = [(color, label) for _, color, _, label in reversed(series)]
+            legend.append((BLUE, "Цель 100 °C"))
         else:
             v_max = self.sim.parameters.max_rate * 60 * 1.15
             legend = ((BLUE, "Выход, кг/мин"), (TEAL, "Максимум при 100 °C"))
@@ -427,14 +459,14 @@ class LabApp:
 
         def point(t, value):
             return (plot.x + (t - t_min) / self.window_seconds * plot.w,
-                    plot.bottom - 1 - value / v_max * (plot.h - 1))
+                    plot.bottom - 1 - (value - v_min) / (v_max - v_min) * (plot.h - 1))
 
         if is_temperature:
             zone_top = point(0, 110)[1]
             zone_bottom = point(0, 90)[1]
             pygame.draw.rect(self.canvas, (24, 53, 55), (plot.x, zone_top, plot.w, zone_bottom - zone_top))
         for index in range(5):
-            value = v_max * index / 4
+            value = v_min + (v_max - v_min) * index / 4
             yy = point(0, value)[1]
             pygame.draw.line(self.canvas, GRID, (plot.left, yy), (plot.right, yy))
             label = f"{value:.0f}" if is_temperature else f"{value:.1f}"
@@ -448,9 +480,7 @@ class LabApp:
         self.canvas.set_clip(plot)
         if is_temperature:
             self.text("90–110 °C", (plot.right - 100, point(0, 110)[1] + 3), 12, TEAL)
-            for attribute, color, line_width in (("heater_temperature", ORANGE, 2),
-                                                  ("sensor_temperature", MUTED, 1),
-                                                  ("temperature", TEAL, 2)):
+            for attribute, color, line_width, _ in series:
                 points = [point(s.time, getattr(s, attribute)) for s in history]
                 if len(points) >= 2:
                     pygame.draw.lines(self.canvas, color, False, points, line_width)
@@ -471,6 +501,7 @@ class LabApp:
                 xx = point(sample.time, 0)[0]
                 self.dashed_line(MUTED, (xx, plot.top), (xx, plot.bottom), 4)
                 detail = (f"{sample.time:.1f} с  ·  бочка {sample.temperature:.1f} °C  ·  нагреватель {sample.heater_temperature:.1f} °C"
+                          f"  ·  {sample.power_kw:.1f} кВт ({sample.duty:.0%})"
                           if is_temperature else f"{sample.time:.1f} с  ·  {sample.rate * 60:.3f} кг/мин  ·  выход {sample.polymer_mass:.2f} кг")
                 tooltip = pygame.Rect(plot.x + 8, plot.y + 5, min(650, plot.w - 16), 30)
                 pygame.draw.rect(self.canvas, BG, tooltip, border_radius=6)
@@ -498,7 +529,7 @@ class LabApp:
         lines = [
             ("Начните с реле", "Режим 2 → дождитесь 100 °C. Мощность уже нулевая, а температура ещё растёт."),
             ("Исследуйте инерцию", "Увеличьте теплоёмкость нагревателя, нажмите R и сравните пик температуры."),
-            ("Сравните управление", "Режим 3: П-регулятор. Режим 4: ПИД. Меняйте Kp, Ki, Kd и начинайте новый опыт."),
+            ("Проверьте устойчивость", "Режим 4: 18 кВт, Kp = 0.05, Kd = 1.2. Сравните Ki = 0.0001 и Ki = 0.01, каждый раз с R."),
             ("Проверьте возмущение", "Около 100 °C нажмите C: обдув увеличивает потери тепла бочки в три раза."),
             ("Напишите свой регулятор", "Откройте controller.py, измените regulator(temperature, dt, target, state)."),
             ("Примените код", "Сохраните файл, нажмите F5 и выберите режим 5. Выход функции: число от 0 до 1."),
@@ -508,7 +539,7 @@ class LabApp:
             self.text(f"0{index + 1}", (252, yy), 20, TEAL, bold=True)
             self.text(title, (297, yy), 19, TEXT, bold=True)
             self.text(detail, (297, yy + 27), 15, MUTED)
-        self.text("В графиках: 90–110 °C — зона синтеза; пунктир — цель; наведите мышь для значений.",
+        self.text("Z — бочка крупно. Наведите мышь на график, чтобы увидеть температуру и мощность.",
                   (252, 662), 16, MUTED)
         self.text("E — полный опыт в CSV. + / − — скорость. Ползунки: мышь, колесо или Tab и ← / →.",
                   (252, 692), 16, MUTED)
